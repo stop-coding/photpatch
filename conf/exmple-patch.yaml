@@ -1,0 +1,20 @@
+apiVersion: test/v1
+kind: hotpatch
+describtion: "hongchunhua hotpatch"
+metadata:
+  name: "hot patch"
+spec:
+  - name: mytest
+    path: /root/develop/photpatch/lib/test.so
+    target: /root/develop/photpatch/bin/test
+    pre_patch_callback: false
+    post_patch_callback: false
+    pre_unpatch_callback: false
+    post_unpatch_callback: false
+    function:
+    - newname: my_test_func
+      oldname: none
+      newaddr: 
+      oldaddr: none
+
+
