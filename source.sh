@@ -4,6 +4,9 @@ injector=$path_root/third-party/'injector'
 libuwind=$path_root/third-party/'libunwind'
 yamlcpp=$path_root/third-party/'yaml-cpp'
 
+if [ ! -d $path_root/third-party ];then
+    mkdir third-party
+fi
 cd third-party/
 if [ ! -d $injector ];then
     git clone  https://github.com/kubo/injector.git
