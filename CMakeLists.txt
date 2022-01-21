@@ -57,4 +57,5 @@ INSTALL(TARGETS hotpatch DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
 endif()
 
 #子项目
-#add_subdirectory("${ARPC_DEMO_PATH}/client_file_send")
+add_subdirectory("${COM_ROOT_PATH}/patch")
+add_subdirectory("${COM_ROOT_PATH}/target")

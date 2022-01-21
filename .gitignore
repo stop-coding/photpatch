@@ -53,3 +53,5 @@ dkms.conf
 third-party/
 build/
 .vscode/
+*.so
+*.a

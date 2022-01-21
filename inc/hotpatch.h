@@ -23,6 +23,7 @@
 #include <cstdlib>
 
 #include "config.h"
+#include "injector.h"
 
 namespace ns_patch{
 
@@ -47,6 +48,7 @@ private:
 private:
 	int attach();
 	int detach();
+	int load_lib(const YAML::hp_patch& patch);
 };
 
 }
