@@ -46,7 +46,7 @@ LINK_DIRECTORIES(${LIBRARY_OUTPUT_PATH} ${LINK_LIB_PATH})
  
 #生成可执行文件
 add_executable(hotpatch ${SOURCE_FILES})
-target_link_libraries(hotpatch  libyaml-cpp.a  libinjector.a -lpthread)
+target_link_libraries(hotpatch  libyaml-cpp.a  libinjector.a -lpthread -lunwind-ptrace -lunwind-generic)
 
 if(EXISTS ${CMAKE_INSTALL_PREFIX})
 message("CMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}")
