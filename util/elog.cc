@@ -44,7 +44,7 @@ void elog_call(enum elog_level level, const char *module, const char *file,unsig
 		snprintf(buf2, sizeof(buf2), "%s:%u", short_file, line);
 	}
 
-    fprintf(stderr, "[%-5s][%-5x][%-5s] [" LOG_TIME_FMT "] %-24s - %s\n", module, gettid(),
+    fprintf(stderr, "[%-5s][%-6u][%-4s] [" LOG_TIME_FMT "] %-24s - %s\n", module, gettid(),
             level_str[level],
             t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
             t.tm_hour, t.tm_min, t.tm_sec, tv.tv_usec,

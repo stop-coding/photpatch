@@ -33,7 +33,7 @@ struct hp_frame
 {
 	hp_frame(uint64_t pc, const std::string &name, uint64_t offset):pc(pc),
 	func_name(name),func_offset(offset){};
-	hp_frame():hp_frame(0, "none", 0){};
+	hp_frame()=delete;
 	uint64_t pc;
 	std::string func_name;
 	uint64_t func_offset;
@@ -66,7 +66,37 @@ private:
 	}
 };
 
+enum class map_type
+{
+	EXE,
+	LIB,
+	HEAP,
+	STACK,
+	OTHER,
+};
+
+struct hp_map
+{
+	std::string path;	// 
+	std::string attr; // rwxp
+	uint64_t start_addr;
+	uint64_t end_addr;
+	uint64_t file_offset;
+
+};
+
+using type_kv = std::map<std::string, std::string>;
+struct hp_process
+{
+	uint32_t mpid;
+	type_kv status;
+	std::vector<uint32_t> pids;
+	std::map<std::string, hp_map> maps;
+};
+
+
 //补丁管理器
+using type_stacks = std::map<uint32_t,std::vector<hp_frame>>;
 class hot_patch{
 public:
 	hot_patch(uint32_t pid, const std::string &yaml):m_pid(pid), m_yaml(yaml){
@@ -75,24 +105,24 @@ public:
 	hot_patch() = delete; //禁止无参数初始化
 	~hot_patch(){};
 	int init();
-	int load_patch_to_target(){};
-	int get_patch_message(){};
-	int get_target_message(){};
-	int active_patch(){};
-	int deactive_patch(){};
 private:
 	std::unique_ptr<ns_patch::config> m_cfg;
 	uint32_t m_pid;
 	std::string m_yaml;
 	std::vector<uint32_t> m_tpids;
+	hp_process m_proc;
 private:
-	int attach();
-	int detach();
+	int get_process_msg(const uint32_t &main_pid, hp_process &proc);
 	int load_lib(const YAML::hp_patch& patch);
 	int get_stack(const uint32_t &pid, std::vector<hp_frame> &stack);
-	int get_threadids();
-	bool is_number(const std::string& str);
+	int attach_get_stack(const uint32_t &pid, std::vector<hp_frame> &stack);
+	int attach_get_stack(const std::vector<uint32_t> &pids, type_stacks &stacks);
+	int get_pids(const uint32_t &mpid, std::vector<uint32_t> &pids);
+	int get_maps(const uint32_t &pid, std::map<std::string, hp_map> &maps);
 	bool is_loaded(const std::string& libpath);
+	int get_dirs(const std::string &path, std::vector<std::string> &dirs);
+	int get_status(const uint32_t &pid, std::map<std::string, std::string> &status);
+	map_type get_map_type(const std::string& map_str);
 };
 
 }

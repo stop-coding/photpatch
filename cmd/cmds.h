@@ -72,7 +72,7 @@ protected:
 private:
     std::string m_yaml;
 	bool m_is_runonce;
-	const std::string m_name = "hotpatch";
+	const std::string m_name = CMD_BOX_DEFAULT;
 };
 }
 
