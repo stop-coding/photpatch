@@ -21,6 +21,7 @@
 #include <vector>
 #include <memory>
 #include <cstdlib>
+#include <map>
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 
@@ -68,27 +69,51 @@ private:
 
 enum class map_type
 {
-	EXE,
-	LIB,
-	HEAP,
-	STACK,
-	OTHER,
+	EXE = 0,
+	LIB = 1,
+	HEAP = 2,
+	STACK = 3,
+	OTHER = 4,
 };
+
+enum class elf_type
+{
+	CODE = 0, //代码段
+	DATA = 1, //数据段
+	VALUE = 2, // 变量段
+	UNKNOWN = 100,
+};
+
+struct map_addr
+{
+	map_addr(const uint64_t &s,const uint64_t &e,const uint64_t &o):
+	start_addr(s),end_addr(e),file_offset(o){};
+	map_addr(){};
+	uint64_t start_addr = 0;
+	uint64_t end_addr = 0;
+	uint64_t file_offset = 0;
+};
+
+struct hp_function
+{
+	uint64_t start = 0;  	// 函数虚拟内存起始地址
+	uint64_t offset = 0;	// 偏量
+	uint64_t size = 0;		// 函数体大小
+};
+
 
 struct hp_map
 {
 	std::string path;	// 
-	std::string attr; // rwxp
-	uint64_t start_addr;
-	uint64_t end_addr;
-	uint64_t file_offset;
-
+	map_type attr; //
+	std::map<elf_type, map_addr> addr;
 };
 
 using type_kv = std::map<std::string, std::string>;
 struct hp_process
 {
-	uint32_t mpid;
+	uint32_t mpid = 0;
+	std::string target;
 	type_kv status;
 	std::vector<uint32_t> pids;
 	std::map<std::string, hp_map> maps;
@@ -99,30 +124,37 @@ struct hp_process
 using type_stacks = std::map<uint32_t,std::vector<hp_frame>>;
 class hot_patch{
 public:
-	hot_patch(uint32_t pid, const std::string &yaml):m_pid(pid), m_yaml(yaml){
-		
+	hot_patch(const uint32_t &pid, const std::string &yaml){
+		m_pid = pid;
+		if (init(pid, yaml)) {
+			m_pid = 0;
+		}
 	};
 	hot_patch() = delete; //禁止无参数初始化
 	~hot_patch(){};
-	int init();
+	int patch();
 private:
 	std::unique_ptr<ns_patch::config> m_cfg;
-	uint32_t m_pid;
-	std::string m_yaml;
-	std::vector<uint32_t> m_tpids;
+	uint32_t m_pid = 0;
 	hp_process m_proc;
 private:
-	int get_process_msg(const uint32_t &main_pid, hp_process &proc);
+	int init(const uint32_t &pid, const std::string &yaml);
+	int try_patch();
+	int load_proc(const uint32_t &main_pid, hp_process &proc);
 	int load_lib(const YAML::hp_patch& patch);
 	int get_stack(const uint32_t &pid, std::vector<hp_frame> &stack);
 	int attach_get_stack(const uint32_t &pid, std::vector<hp_frame> &stack);
 	int attach_get_stack(const std::vector<uint32_t> &pids, type_stacks &stacks);
 	int get_pids(const uint32_t &mpid, std::vector<uint32_t> &pids);
-	int get_maps(const uint32_t &pid, std::map<std::string, hp_map> &maps);
+	int get_maps(const uint32_t &pid, std::map<std::string, hp_map> &maps, std::string &target);
 	bool is_loaded(const std::string& libpath);
 	int get_dirs(const std::string &path, std::vector<std::string> &dirs);
 	int get_status(const uint32_t &pid, std::map<std::string, std::string> &status);
 	map_type get_map_type(const std::string& map_str);
+	elf_type get_elf_type(const std::string& str);
+	int replace(const hp_function &new_func, const hp_function &old_func);
+	int text_write(const size_t &addr, const std::vector<uint8_t> &data);
+	int text_read(const size_t &addr, const uint32_t &size, std::vector<uint8_t> &data);
 };
 
 }

@@ -168,7 +168,6 @@ post_unpatch_callback: None
 struct hp_patch { 
     std::string name;
     std::string path;
-    std::string target;
     bool pre_patch_callback;
     bool post_patch_callback;
     bool pre_unpatch_callback;
@@ -182,7 +181,6 @@ struct convert<hp_patch> {
     Node node;
     node["name"] = in.name;
     node["path"] = in.path;
-    node["target"] = in.target;
     node["pre_patch_callback"] = in.pre_patch_callback;
     node["post_patch_callback"] = in.post_patch_callback;
     node["pre_unpatch_callback"] = in.pre_unpatch_callback;
@@ -208,12 +206,6 @@ struct convert<hp_patch> {
 
     if (node["path"]) {
       in.path = node["path"].as<std::string>();
-    } else {
-      return false;
-    }
-
-    if (node["target"]) {
-      in.target = node["target"].as<std::string>();
     } else {
       return false;
     }

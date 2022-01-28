@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <stdarg.h>
+#include <pthread.h>
 
 #define lengthof(x) (sizeof(x) / sizeof(x[0]))
 
@@ -13,10 +14,15 @@ static pid_t gettid()
 	return syscall(SYS_gettid);
 }
 
-
-void helloworld(void)
+void new_helloworld(int i)
 {
-    printf(" i will running always....\n");
+    printf(" i will running always ,id[%d]....\n", i);
+    return;
+}
+
+void helloworld(int i)
+{
+    new_helloworld(i);
 }
 
 int thread_stop()
@@ -26,7 +32,7 @@ int thread_stop()
 
 int cmp(const void *a, const void *b)
 {
-    helloworld();
+    helloworld(1);
 	sleep(1);
     return 0;
 }
@@ -37,8 +43,8 @@ static void *thread_worker(void* arg)
     printf("thread id = [ %d ]\n", gettid());
     for(;;) {
         sleep(thread_id%10);
-        printf("thread id is %d, runing...\n", thread_id);
-        helloworld();
+        //printf("thread id is %d, runing...\n", thread_id);
+        helloworld(thread_id);
         if (thread_stop()) {
             break;
         }
@@ -69,8 +75,8 @@ static void multi_thread(void)
 
 int main(int argc, char **argv)
 {
-	int data[] = {1, 2, 3, 4};
-	int needle = 4;
+	//int data[] = {1, 2, 3, 4};
+	//int needle = 4;
 
     printf("process id = [ %d ]\n", gettid());
 	// ensure we backtrace through dynamically linked symbols too

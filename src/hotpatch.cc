@@ -18,60 +18,145 @@ using namespace std;
 using namespace ns_patch;
 using namespace YAML;
 
-int hot_patch::init()
+const static int MAX_RETRY_TIMES = 3;
+const static int RETRY_INTERVAL_TIME_MS = 200;
+
+int hot_patch::patch()
 {
     if (m_pid == 0) {
-        ELOG_ERROR("target pid [%u] fail.", m_pid);
+        ELOG_ERROR("load fail.");
         return HP_ERR;
     }
-    std::unique_ptr<ns_patch::config> pcfg(new config(m_yaml));
-    if (pcfg->load() != 0) {
-        ELOG_ERROR("load yaml file[%s] fail.", m_yaml.c_str());
+    int i;
+    for (i = 0; i < MAX_RETRY_TIMES; i++) {
+        if (try_patch() == HP_OK) {
+            break;
+        }
+        ELOG_ERROR("try patch fail, wait (%u ms) then retry!", RETRY_INTERVAL_TIME_MS);
+        usleep(RETRY_INTERVAL_TIME_MS * 1000);
+    }
+    if (i == MAX_RETRY_TIMES) {
+        ELOG_ERROR("try patch process[%u] fail.", m_pid);
         return HP_ERR;
     }
-    m_cfg = std::move(pcfg);
-    if (get_process_msg(m_pid, m_proc) != 0) {
-        ELOG_ERROR("find pid[%u] fail.", m_pid);
-        return HP_ERR;
-    }   
-    type_stacks stacks;
-    attach_get_stack(m_proc.pids, stacks);
-   /*  for (const auto &s : stacks) {
-        ELOG_NOTICE("get stack: %u", s.first);
-        for (hp_frame const &f : s.second) {
-            ELOG_NOTICE("0x%lx : %s + 0x%lx.", f.pc, f.func_name.c_str(), f.func_offset);
-        }
-        //break;
-    } */
-    
-    for (const auto &libpath : m_cfg->get().patch) {
-        if (load_lib(libpath) != 0) {
-            abort();
-        }
-    }
-
-    for (const auto &m : m_proc.maps) {
-        const auto &map = m.second;
-        //ELOG_NOTICE("map: 0x%lx - 0x%lx 0x%lx %s", map.start_addr, map.end_addr, map.file_offset, map.path.c_str());
-        hp_elf elf(map.path);
-        if (elf.is_open()) {
-            size_t offset = elf.get_offset("helloworld");
-            if (offset > 0 ) {
-                ELOG_NOTICE("find func[helloworld] on file[%s] offset[%ld]", map.path.c_str(), offset);
-            } else {
-                ELOG_ERROR("find func[helloworld] on file[%s] fail.", map.path.c_str());
-            }
-        }
-    }
-
-    for (const auto &s : m_proc.status) {
-        ELOG_NOTICE("%s = %s ", s.first.c_str(), s.second.c_str());
-    }
-
+    ELOG_NOTICE("patch pid[%u] success!", m_pid);
     return 0;
 }
 
-int hot_patch::get_process_msg(const uint32_t &main_pid, hp_process &proc)
+int hot_patch::try_patch() {
+    int ret = HP_OK;
+    if (m_proc.maps.find(m_proc.target) == m_proc.maps.end()) {
+        ELOG_ERROR("invalid target[%s] that to patch.", m_proc.target.c_str());
+        return HP_ERR;
+    }
+    auto &target_map = m_proc.maps[m_proc.target];
+    hp_elf target_elf(m_proc.target);
+    if (target_elf.is_open() == false) {
+        ELOG_ERROR("parse target[%s] elf fail.", m_proc.target.c_str());
+        return HP_ERR;
+    }
+    ptrace_attach pt(m_proc.pids);
+    for (const auto &patch : m_cfg->get().patch) {
+        auto it = m_proc.maps.find(patch.path);
+        if (it == m_proc.maps.end()) {
+            ELOG_ERROR("patch[%s] have not loaded.", patch.path.c_str());
+            continue;
+        }
+        auto &patch_map = it->second;
+        hp_elf p_elf(patch.path);
+        if (target_elf.is_open() == false) {
+            ELOG_ERROR("parse patch[%s] elf fail.", patch.path.c_str());
+            continue;
+        }
+        // check name
+        vector<hp_function> replaced;
+        for (const auto &func : patch.funcs) {
+            if (!target_elf.is_func_exist(func.new_name) || !p_elf.is_func_exist(func.new_name)) {
+                ELOG_ERROR("invalid function[%s] that to patch.", func.new_name.c_str());
+                ret = HP_ERR;
+                break;
+            }
+            hp_function old_func;
+            old_func.start = 0;
+            old_func.offset = target_elf.get_offset(func.new_name);
+            old_func.size = target_elf.get_size(func.new_name);
+
+            hp_function new_func;
+            new_func.start = patch_map.addr[elf_type::CODE].start_addr;
+            new_func.offset = p_elf.get_offset(func.new_name);
+            new_func.size = p_elf.get_size(func.new_name);
+
+            ret = replace(new_func, old_func);
+            if (ret) {
+                ELOG_ERROR("invalid target[%s] that to patch.", m_proc.target.c_str());
+                break;
+            }
+            replaced.emplace_back(old_func);
+        }
+        if (ret) {
+            for (const hp_function &f: replaced) {
+                // todo restore
+                ELOG_ERROR("Restore Func -- start:0x%lx, offset:0x%lx, size:0x%lx", f.start, f.offset, f.size);
+            }
+            break;
+        }
+    }
+    return ret;
+}
+
+int hot_patch::replace(const hp_function &new_func, const hp_function &old_func)
+{
+    vector<uint8_t> data;
+    ELOG_NOTICE("New Func -- start:0x%lx, offset:0x%lx, size:0x%lx", new_func.start, new_func.offset, new_func.size);
+    int ret = text_read(new_func.start + new_func.offset, new_func.size, data);
+    HP_ASSERT(ret == 0);
+    for (const auto &c: data) {
+        printf("%x ", c);
+    }
+    printf("\n\n");
+    ELOG_NOTICE("Old Func -- start:0x%lx, offset:0x%lx, size:0x%lx", old_func.start, old_func.offset, old_func.size);
+    ret = text_read(old_func.start + old_func.offset, old_func.size, data);
+    HP_ASSERT(ret == 0);
+    for (const auto &c: data) {
+        printf("%x ", c);
+    }
+    printf("\n\n");
+    return 0;
+}
+
+int hot_patch::init(const uint32_t &pid, const std::string &yaml)
+{
+    if (pid == 0) {
+        ELOG_ERROR("target pid [%u] fail.", pid);
+        return HP_ERR;
+    }
+    if (is_file_exsit("/proc/"+to_string(pid)) == false) {
+        ELOG_ERROR("target pid [%u] not running, check it.", pid);
+        return HP_ERR;
+    }
+    std::unique_ptr<ns_patch::config> pcfg(new config(yaml));
+    if (pcfg->load() != 0) {
+        ELOG_ERROR("load yaml file[%s] fail.", yaml.c_str());
+        return HP_ERR;
+    }
+    m_cfg = std::move(pcfg);
+    
+    for (const auto &patch : m_cfg->get().patch) {
+        if (load_lib(patch) != HP_OK) {
+            ELOG_ERROR("load lib[%s] fail.", patch.path.c_str());
+            return HP_ERR;
+        }
+    }
+
+    if (load_proc(pid, m_proc) != 0) {
+        ELOG_ERROR("find pid[%u] fail.", pid);
+        return HP_ERR;
+    }   
+    ELOG_NOTICE("Load pid[%u] with cfg[%s] success!", pid, yaml.c_str());
+    return 0;
+}
+
+int hot_patch::load_proc(const uint32_t &main_pid, hp_process &proc)
 {
     int ret = 0;
 
@@ -81,7 +166,7 @@ int hot_patch::get_process_msg(const uint32_t &main_pid, hp_process &proc)
         return HP_ERR;
     }
 
-    ret = get_maps(main_pid, proc.maps);
+    ret = get_maps(main_pid, proc.maps, proc.target);
     if (ret) {
         ELOG_ERROR("get maps with pid[%u] fail.", main_pid);
         return HP_ERR;
@@ -110,8 +195,40 @@ bool hot_patch::is_loaded(const string& libpath)
 
 map_type hot_patch::get_map_type(const string& map_str)
 {
-    return map_type::EXE;
+    map_type t;
+    if (is_file_exsit(map_str)) {
+        if (is_find(map_str, ".so")) {
+            t = map_type::LIB;
+        } else {
+            t = map_type::EXE;
+        }
+    } else {
+        if (map_str == "[heep]") {
+            t = map_type::HEAP;
+        } else if (map_str == "[stack]") {
+            t = map_type::STACK;
+        } else {
+            t = map_type::OTHER;
+        }
+    }
+    return t;
 }
+
+elf_type hot_patch::get_elf_type(const string& str)
+{
+    elf_type t;
+    if (str == "r-xp") {
+        t = elf_type::CODE;
+    } else if (str == "r--p") {
+        t = elf_type::DATA;
+    } else if (str == "rw-p") {
+        t = elf_type::VALUE;
+    } else {
+        t = elf_type::UNKNOWN;
+    }
+    return t;
+}
+
 
 int hot_patch::get_status(const uint32_t &pid, map<string, string> &status)
 {
@@ -164,7 +281,7 @@ int hot_patch::get_pids(const uint32_t &mpid, std::vector<uint32_t> &pids)
 }
 
 
-int hot_patch::get_maps(const uint32_t &pid, map<string, hp_map> &maps)
+int hot_patch::get_maps(const uint32_t &pid, map<string, hp_map> &maps, string &target)
 {
     string maps_path = "/proc/" + to_string(pid) + "/maps";
     ifstream proc(maps_path, ios::in);
@@ -173,6 +290,7 @@ int hot_patch::get_maps(const uint32_t &pid, map<string, hp_map> &maps)
         return -1;
     }
     string line;
+    // xx-xx r-- file_offset fd:00 映射文件所属节点号  有名文件映射
     while(getline(proc, line)) {    
         if (line.empty()) {
             continue;
@@ -194,14 +312,20 @@ int hot_patch::get_maps(const uint32_t &pid, map<string, hp_map> &maps)
             ELOG_ERROR("offset[%s] parse fail.", map[2].c_str());
             return HP_ERR;
         }
-
-        hp_map m;
-        m.start_addr = std::stoull(addr[0], nullptr, 16);
-        m.end_addr = std::stoull(addr[1], nullptr, 16);
-        m.file_offset = std::stoull(map[2], nullptr, 16);
-        m.path = map[5];
-        m.attr = map[1];
-        maps[map[5]] = move(m);
+        map_addr addr_num(std::stoull(addr[0], nullptr, 16), std::stoull(addr[1], nullptr, 16), std::stoull(map[2], nullptr, 16));
+        auto it = maps.find(map[5]);
+        if (it == maps.end()) {
+            hp_map m;
+            m.path = map[5];
+            m.attr = get_map_type(m.path);
+            m.addr[get_elf_type(map[1])] = move(addr_num);
+            maps[m.path] = move(m);
+        } else {
+            it->second.addr[get_elf_type(map[1])] = move(addr_num);
+        }
+        if (maps.size() == 1 && is_file_exsit(map[5]) && !is_find(map[5], ".so")) {
+            target = map[5];
+        }
     }
     return 0;
 }
@@ -212,7 +336,7 @@ int hot_patch::load_lib(const hp_patch& patch)
     char abspath[PATH_MAX];
 
     if (realpath(patch.path.c_str(), abspath) == NULL) {
-        elog().error("failed to get the full path of: " + patch.path);
+        ELOG_ERROR("failed to get the full path[%s]", patch.path.c_str());
         return HP_ERR;
     }
     string libpath = string(abspath);
@@ -224,7 +348,7 @@ int hot_patch::load_lib(const hp_patch& patch)
     injector_t *injector;
     if (injector_attach(&injector, m_pid) != 0) {
         ELOG_ERROR("%s\n", injector_error());
-        return 1;
+        return HP_ERR;
     }
     if (injector_inject(injector, libpath.c_str(), NULL) == 0) {
         ELOG_NOTICE("\"%s\" successfully injected\n", libpath.c_str());
@@ -332,4 +456,57 @@ end:
         _UPT_destroy(context);
     }
     return ret;
+}
+
+int hot_patch::text_write(const size_t &addr, const vector<uint8_t> &data)
+{
+    char word[sizeof(long)] = {};
+    size_t offset = 0;
+    size_t i = 0;
+    long ret;
+    for (const auto &c: data) {
+        word[i] = c;
+        i++;
+        if (i < sizeof(long)) {
+            continue;
+        }
+        ret = ptrace(PTRACE_POKETEXT, m_pid, (addr + offset), word);
+        HP_ASSERT(ret == 0);
+        offset += sizeof(long);
+        i = 0;
+    }
+    if (i != 0) {
+        long read_w = ptrace(PTRACE_PEEKTEXT, m_pid, (addr + offset), 0);
+        HP_ASSERT(read_w != -1);
+        char *dest = (char*)&read_w;
+        for (; i < sizeof(long); i++) {
+            word[i] = *(dest+i);
+        }
+        ret = ptrace(PTRACE_POKETEXT, m_pid, (addr + offset), word);
+        HP_ASSERT(ret == 0);
+    }
+    return 0;
+}
+
+int hot_patch::text_read(const size_t &addr, const uint32_t &size, std::vector<uint8_t> &data)
+{
+    long word;
+    uint32_t word_num = size/sizeof(long);
+    for (uint32_t i = 0; i < word_num; i++) {
+        word = ptrace(PTRACE_PEEKTEXT, m_pid, addr + i*sizeof(long), 0);
+        HP_ASSERT(word != -1);
+        char *src = (char *)&word;
+        for (uint32_t j = 0; j < sizeof(long); j++) {
+            data.push_back(*(src+j));
+        }
+    }
+    if (size%sizeof(long) > 0) {
+        word = ptrace(PTRACE_PEEKTEXT, m_pid, addr + word_num*sizeof(long), 0);
+        HP_ASSERT(word != -1);
+        char *src = (char *)&word;
+        for (uint32_t j = 0; j < size%sizeof(long); j++) {
+            data.push_back(*(src+j));
+        }
+    }
+    return 0;
 }

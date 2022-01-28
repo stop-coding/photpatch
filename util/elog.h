@@ -1,6 +1,7 @@
 #include <stdio.h>
-#include <string.h>
 #include<string>
+#include<string.h>
+#include<assert.h>
 
 #pragma once
 
@@ -15,6 +16,7 @@ enum elog_level{
 	ELOG_LEVEL_E_MAX,
 };
 
+#define HP_OK   0
 #define HP_ERR (-1)
 
 void elog_call(enum elog_level level, const char *module, const char *file,unsigned line, const char *function, const char *fmt, ...);
@@ -30,6 +32,7 @@ void elog_call(enum elog_level level, const char *module, const char *file,unsig
 #define ELOG_TRACE(format, arg...)\
 	elog_call(ELOG_LEVEL_E_TRACE, "HOTPATCH", __FILE__, __LINE__, __FUNCTION__, format, ##arg);
 
+#define HP_ASSERT(c) assert((c))
 namespace ns_patch{
 
 class elog{

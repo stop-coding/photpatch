@@ -74,6 +74,25 @@ size_t hp_elf::get_offset(const std::string &func_name)
     return (size_t)sym.st_value;
 }
 
+size_t hp_elf::get_size(const std::string &func_name)
+{
+    Elf_Sym sym;
+    if (get_elf_symtable(func_name, sym) != 0) {
+        ELOG_ERROR("get elf symbol table[%s] fail.", func_name.c_str());
+        return 0;
+    }
+    return (size_t)sym.st_size;
+}
+
+bool hp_elf::is_func_exist(const std::string &func_name)
+{
+    Elf_Sym sym;
+    if (get_elf_symtable(func_name, sym) != 0) {
+        return false;
+    }
+    return true;
+}
+
 int hp_elf::get_elf_section(const sec_type &type, Elf_Shdr &shdr) 
 {
     auto it = m_msg.sections.find(type);
@@ -114,6 +133,37 @@ int hp_elf::get_elf_section(const sec_type &type, Elf_Shdr &shdr)
         return 0;
     }
     return HP_ERR;
+}
+
+int hp_elf::parse() 
+{
+    const sec_type default_secs[] = {sec_type::dynstr, sec_type::dynsym};
+    if (!m_fp) {
+        ELOG_ERROR("fd is null.");
+        return -1;
+    }
+    int ret = read_elf_ehdr(m_fp, &m_msg.head);
+    if (ret) {
+        ELOG_ERROR("read_elf_ehdr fail.");
+        return -1;
+    }
+    auto &ehdr = m_msg.head;
+    fseek(m_fp, ehdr.e_shoff + ehdr.e_shstrndx * ehdr.e_shentsize, SEEK_SET);
+    ret = read_elf_shdr(m_fp, &m_msg.shstrtab, ehdr.e_shentsize);
+    if (ret != 0) {
+        ELOG_ERROR("read_elf_shdr of strtable fail.");
+        return -1;
+    }
+
+    for (size_t i = 0; i < sizeof(default_secs)/sizeof(uint32_t); i++) {
+        Elf_Shdr shdr;
+        if (get_elf_section(default_secs[i], shdr) != 0) {
+            ELOG_ERROR("get section[%d] fail.", default_secs[i]);
+            return -1;
+        }
+        m_msg.sections[default_secs[i]] = shdr;
+    }
+    return 0;
 }
 
 int hp_elf::get_elf_symtable(const string &func_name, Elf_Sym &sym) 
@@ -170,39 +220,6 @@ int hp_elf::get_elf_symtable(const string &func_name, Elf_Sym &sym)
     ELOG_ERROR("can't find symbol table with func name[%s].", func_name.c_str());
     return -1;
 }
-
-
-int hp_elf::parse() 
-{
-    const sec_type default_secs[] = {sec_type::dynstr, sec_type::dynsym};
-    if (!m_fp) {
-        ELOG_ERROR("fd is null.");
-        return -1;
-    }
-    int ret = read_elf_ehdr(m_fp, &m_msg.head);
-    if (ret) {
-        ELOG_ERROR("read_elf_ehdr fail.");
-        return -1;
-    }
-    auto &ehdr = m_msg.head;
-    fseek(m_fp, ehdr.e_shoff + ehdr.e_shstrndx * ehdr.e_shentsize, SEEK_SET);
-    ret = read_elf_shdr(m_fp, &m_msg.shstrtab, ehdr.e_shentsize);
-    if (ret != 0) {
-        ELOG_ERROR("read_elf_shdr of strtable fail.");
-        return -1;
-    }
-
-    for (size_t i = 0; i < sizeof(default_secs)/sizeof(uint32_t); i++) {
-        Elf_Shdr shdr;
-        if (get_elf_section(default_secs[i], shdr) != 0) {
-            ELOG_ERROR("get section[%d] fail.", default_secs[i]);
-            return -1;
-        }
-        m_msg.sections[default_secs[i]] = shdr;
-    }
-    return 0;
-}
-
 
 static int read_elf_ehdr(FILE *fp, Elf_Ehdr *ehdr)
 {

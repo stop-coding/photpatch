@@ -6,14 +6,13 @@ metadata:
 spec:
   - name: mytest
     path: /root/develop/photpatch/build/lib/libpatch.so
-    target: ./bin/test
     pre_patch_callback: false
     post_patch_callback: false
     pre_unpatch_callback: false
     post_unpatch_callback: false
     function:
-    - newname: my_test_func
-      oldname: none
+    - newname: helloworld
+      oldname: helloworld
       newaddr: 
       oldaddr: none
 

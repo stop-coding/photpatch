@@ -55,7 +55,9 @@ public:
     hp_elf()=delete;
     ~hp_elf();
     bool is_open(){return m_is_ok;};
+    bool is_func_exist(const std::string &func_name);
     size_t get_offset(const std::string &func_name);
+    size_t get_size(const std::string &func_name);
 private:
     FILE *m_fp = nullptr;
     hp_elf_msg m_msg;

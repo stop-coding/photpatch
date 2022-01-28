@@ -25,5 +25,13 @@ static inline bool is_hexnum(const std::string& str)
     return true;
 }
 
+static inline bool is_find(const std::string& str, const std::string& to_find)
+{
+    if (str.empty() || to_find.empty() || str.find(to_find) == str.npos) {
+        return false;
+    }
+    return true;
+}
+
 std::string  string_strip(const std::string& str);
 std::string  string_strip(const std::string& str, char c);

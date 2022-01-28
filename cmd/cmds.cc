@@ -45,7 +45,7 @@ int cmd_hp::do_run(const cmdline::parser &opts) const
     }
 
     hot_patch mypatch(opts.get<int>(PROCESS_ID), opts.get<string>(YAML_FILE_PATH));
-    if (mypatch.init() != 0) {
+    if (mypatch.patch() != 0) {
         cerr<<" init patch fail."<<endl;
         return -1;
     }
