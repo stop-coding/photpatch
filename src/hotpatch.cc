@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "arch.h"
 #include "injector.h"
 #include "hp_elf.h"
 #include "hotpatch.h"
@@ -69,7 +70,7 @@ int hot_patch::try_patch() {
             continue;
         }
         // check name
-        vector<hp_function> replaced;
+        vector<hp_backup> recover;
         for (const auto &func : patch.funcs) {
             if (!target_elf.is_func_exist(func.new_name) || !p_elf.is_func_exist(func.new_name)) {
                 ELOG_ERROR("invalid function[%s] that to patch.", func.new_name.c_str());
@@ -77,7 +78,7 @@ int hot_patch::try_patch() {
                 break;
             }
             hp_function old_func;
-            old_func.start = 0;
+            old_func.start = target_map.addr[elf_type::CODE].start_addr;
             old_func.offset = target_elf.get_offset(func.new_name);
             old_func.size = target_elf.get_size(func.new_name);
 
@@ -86,19 +87,33 @@ int hot_patch::try_patch() {
             new_func.offset = p_elf.get_offset(func.new_name);
             new_func.size = p_elf.get_size(func.new_name);
 
+            hp_backup bak;
+            bak.name = func.new_name;
+            bak.addr = old_func.start + old_func.offset;
+            bak.size = old_func.size;
+            ret = bytecode_read(bak.addr, bak.size, bak.byte_codes);
+            if (ret) {
+                ELOG_ERROR("backup func[%s] byte codes fail.", bak.name.c_str());
+                break;
+            }
+            recover.emplace_back(bak);
             ret = replace(new_func, old_func);
             if (ret) {
                 ELOG_ERROR("invalid target[%s] that to patch.", m_proc.target.c_str());
                 break;
             }
-            replaced.emplace_back(old_func);
         }
         if (ret) {
-            for (const hp_function &f: replaced) {
-                // todo restore
-                ELOG_ERROR("Restore Func -- start:0x%lx, offset:0x%lx, size:0x%lx", f.start, f.offset, f.size);
+            for (const auto &f: recover) {
+                ELOG_NOTICE("Restore Func[%s] -- addr:0x%lx, size:0x%lx", f.name.c_str(), f.addr, f.size);
+                int ret = bytecode_write(f.addr, f.byte_codes);
+                HP_ASSERT(ret == 0);
             }
             break;
+        }
+        ret = backup(recover);
+        if (ret) {
+            ELOG_ERROR("backup patch[%s] fail, it can't rollback.", patch.name.c_str());
         }
     }
     return ret;
@@ -107,22 +122,38 @@ int hot_patch::try_patch() {
 int hot_patch::replace(const hp_function &new_func, const hp_function &old_func)
 {
     vector<uint8_t> data;
-    ELOG_NOTICE("New Func -- start:0x%lx, offset:0x%lx, size:0x%lx", new_func.start, new_func.offset, new_func.size);
-    int ret = text_read(new_func.start + new_func.offset, new_func.size, data);
-    HP_ASSERT(ret == 0);
-    for (const auto &c: data) {
-        printf("%x ", c);
+    uint8_t byte_code[FUNC_BYTE_CODE_MIN_LEN + 1] = {};
+    int len = 0;
+
+    ELOG_NOTICE("New Func -- start:0x%lx, offset:0x%lx, size:%lu", new_func.start, new_func.offset, new_func.size);
+    ELOG_NOTICE("Old Func -- start:0x%lx, offset:0x%lx, size:%lu", old_func.start, old_func.offset, old_func.size);
+    ELOG_NOTICE("Get arch: %s", ARCH_NAME);
+    len = get_jump_byte_codes(new_func.start + new_func.offset, byte_code, sizeof(byte_code));
+    if (len <= 0) {
+        ELOG_ERROR("get jump byte codes fail.");
+        return HP_ERR;
     }
-    printf("\n\n");
-    ELOG_NOTICE("Old Func -- start:0x%lx, offset:0x%lx, size:0x%lx", old_func.start, old_func.offset, old_func.size);
-    ret = text_read(old_func.start + old_func.offset, old_func.size, data);
-    HP_ASSERT(ret == 0);
-    for (const auto &c: data) {
-        printf("%x ", c);
+    if (old_func.size < (uint64_t)len) {
+        ELOG_ERROR("the size of replace function must be large to byte codes.");
+        return HP_ERR;
     }
-    printf("\n\n");
+    for (int i = 0; i < len; i++) {
+        data.push_back(byte_code[i]);
+    }
+    int ret = bytecode_write(old_func.start + old_func.offset, data);
+    HP_ASSERT(ret == 0);
     return 0;
 }
+
+int hot_patch::backup(const vector<hp_backup> &recover)
+{
+    // TODO backup old func to memory
+    for (const auto &f: recover) {
+        ELOG_NOTICE("backup Func[%s] -- addr:0x%lx, size:0x%lx", f.name.c_str(), f.addr, f.size);
+    }
+    return 0;
+}
+
 
 int hot_patch::init(const uint32_t &pid, const std::string &yaml)
 {
@@ -325,6 +356,7 @@ int hot_patch::get_maps(const uint32_t &pid, map<string, hp_map> &maps, string &
         }
         if (maps.size() == 1 && is_file_exsit(map[5]) && !is_find(map[5], ".so")) {
             target = map[5];
+            maps[map[5]].addr[elf_type::CODE].start_addr = 0; // 进程自身起始地址为0
         }
     }
     return 0;
@@ -458,7 +490,7 @@ end:
     return ret;
 }
 
-int hot_patch::text_write(const size_t &addr, const vector<uint8_t> &data)
+int hot_patch::bytecode_write(const size_t &addr, const vector<uint8_t> &data)
 {
     char word[sizeof(long)] = {};
     size_t offset = 0;
@@ -470,7 +502,7 @@ int hot_patch::text_write(const size_t &addr, const vector<uint8_t> &data)
         if (i < sizeof(long)) {
             continue;
         }
-        ret = ptrace(PTRACE_POKETEXT, m_pid, (addr + offset), word);
+        ret = ptrace(PTRACE_POKETEXT, m_pid, (addr + offset), *(long*)word);
         HP_ASSERT(ret == 0);
         offset += sizeof(long);
         i = 0;
@@ -482,13 +514,13 @@ int hot_patch::text_write(const size_t &addr, const vector<uint8_t> &data)
         for (; i < sizeof(long); i++) {
             word[i] = *(dest+i);
         }
-        ret = ptrace(PTRACE_POKETEXT, m_pid, (addr + offset), word);
+        ret = ptrace(PTRACE_POKETEXT, m_pid, (addr + offset), *(long*)word);
         HP_ASSERT(ret == 0);
     }
     return 0;
 }
 
-int hot_patch::text_read(const size_t &addr, const uint32_t &size, std::vector<uint8_t> &data)
+int hot_patch::bytecode_read(const size_t &addr, const uint32_t &size, std::vector<uint8_t> &data)
 {
     long word;
     uint32_t word_num = size/sizeof(long);

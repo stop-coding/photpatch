@@ -55,3 +55,4 @@ build/
 .vscode/
 *.so
 *.a
+*.code-workspace

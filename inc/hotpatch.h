@@ -101,6 +101,13 @@ struct hp_function
 	uint64_t size = 0;		// 函数体大小
 };
 
+struct hp_backup
+{
+	std::string name;
+	uint64_t addr = 0;	
+	uint64_t size = 0;
+	std::vector<uint8_t> byte_codes;
+};
 
 struct hp_map
 {
@@ -153,8 +160,9 @@ private:
 	map_type get_map_type(const std::string& map_str);
 	elf_type get_elf_type(const std::string& str);
 	int replace(const hp_function &new_func, const hp_function &old_func);
-	int text_write(const size_t &addr, const std::vector<uint8_t> &data);
-	int text_read(const size_t &addr, const uint32_t &size, std::vector<uint8_t> &data);
+	int backup(const std::vector<hp_backup> &recover);
+	int bytecode_write(const size_t &addr, const std::vector<uint8_t> &data);
+	int bytecode_read(const size_t &addr, const uint32_t &size, std::vector<uint8_t> &data);
 };
 
 }

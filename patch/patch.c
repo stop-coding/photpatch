@@ -32,5 +32,5 @@ int post_unpatch_callback(void)
 
 void helloworld(int i)
 {
-    printf("Hello world, I'm new patch, id[%d].", i);
+    printf("Hello world, I'm new patch, id[%d].\n", i);
 }
