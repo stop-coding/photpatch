@@ -31,6 +31,7 @@ static int read_elf_ehdr(FILE *fp, Elf_Ehdr *ehdr);
 static int read_elf_shdr(FILE *fp, Elf_Shdr *shdr, size_t shdr_size);
 static int read_elf_sym(FILE *fp, Elf_Sym *sym, size_t sym_size);
 static size_t find_strtab_offset(FILE *fp, size_t offset, size_t size, const char *name);
+static int find_strtab_name(FILE *fp, size_t offset, char *name, size_t size);
 struct elf_section_map
 {
     Elf_Word type;
@@ -46,15 +47,7 @@ static const elf_section_map G_SEC_MAP[] =
 hp_elf::hp_elf(const std::string &elf_file)
 {
     m_is_ok = false;
-    m_fp = fopen(elf_file.c_str(), "r");
-    if (!m_fp) {
-        ELOG_ERROR("open elf file[%s] fail, check it.", elf_file.c_str());
-        return;
-    }
-    if(parse() != 0) {
-        return;
-    }
-    m_is_ok = true;
+    load(elf_file);
 }
 
 hp_elf::~hp_elf()
@@ -64,6 +57,34 @@ hp_elf::~hp_elf()
     }
 }
 
+bool hp_elf::load(const std::string &elf_file)
+{
+    if (m_is_ok) {
+        return true;
+    }
+    m_fp = fopen(elf_file.c_str(), "r");
+    if (!m_fp) {
+        ELOG_ERROR("open elf file[%s] fail, check it.", elf_file.c_str());
+        return false;
+    }
+    if(parse() != 0) {
+        return false;
+    }
+    m_is_ok = true;
+    m_file = elf_file;
+    return true;
+}
+
+std::string hp_elf::get_func_name(const size_t &offset)
+{
+    string func;
+    Elf_Sym sym;
+    if (get_elf_symtable(offset, func, sym) != 0) {
+        ELOG_ERROR("get elf symbol table with offset[0x%016lx] fail.", offset);
+        return func;
+    }
+    return func;
+}
 size_t hp_elf::get_offset(const std::string &func_name)
 {
     Elf_Sym sym;
@@ -165,6 +186,68 @@ int hp_elf::parse()
     }
     return 0;
 }
+// st_offset is string table index,not function offset
+int hp_elf::get_elf_func_name(const size_t &st_offset, string &name)
+{
+    char cname[256];
+    cname[sizeof(cname) - 1] = 0; 
+    int ret = find_strtab_name(m_fp, st_offset, cname, sizeof(cname));
+    if (ret) {
+        return ret;
+    }
+    name = string(cname);
+    return 0;
+}
+
+int hp_elf::get_elf_symtable(const size_t &address, string &name, Elf_Sym &sym) 
+{
+    for (const auto &st : m_msg.symtables) {
+        if (st.second.st_value == address) {
+            sym = st.second;
+            return 0;
+        }
+    }
+    Elf_Shdr shdr;
+    int ret = get_elf_section(sec_type::dynstr, shdr);
+    if (ret) {
+        ELOG_ERROR("get_elf_section fail with type [%d].", SHT_STRTAB);
+        return -1;
+    }
+
+    if (!m_fp) {
+        ELOG_ERROR("fd is null.");
+        return -1;
+    }
+
+    ret = get_elf_section(sec_type::dynsym, shdr);
+    if (ret) {
+        ELOG_ERROR("get_elf_section fail with type [%d].", SHT_DYNSYM);
+        return -1;
+    }
+    size_t sym_offset = shdr.sh_offset;
+    size_t sym_entsize = shdr.sh_entsize;
+    size_t sym_num = 1;
+    if (shdr.sh_entsize > 0 ) {
+        sym_num = shdr.sh_size / shdr.sh_entsize;
+    }
+    fseek(m_fp, sym_offset, SEEK_SET);
+    for (size_t i = 0; i < sym_num; i++) {
+        ret = read_elf_sym(m_fp, &sym, sym_entsize);
+        if (ret != 0) {
+            ELOG_ERROR("read_elf_sym on offset [0x%lx] fail.", i*sym_entsize);
+            return -1;
+        }
+        if (sym.st_value != address) {
+            continue;
+        }
+        ret = get_elf_func_name(sym.st_name, name);
+        m_msg.symtables[name] = sym;
+        return 0;
+    }
+    ELOG_ERROR("can't find symbol table with offset[0x%lx].", address);
+    return -1;
+}
+
 
 int hp_elf::get_elf_symtable(const string &func_name, Elf_Sym &sym) 
 {
@@ -180,14 +263,13 @@ int hp_elf::get_elf_symtable(const string &func_name, Elf_Sym &sym)
         ELOG_ERROR("get_elf_section fail with type [%d].", SHT_STRTAB);
         return -1;
     }
-    size_t str_offset = shdr.sh_offset;
-    size_t str_size = shdr.sh_size;
+
     if (!m_fp) {
         ELOG_ERROR("fd is null.");
         return -1;
     }
 
-    size_t st_name = find_strtab_offset(m_fp, str_offset, str_size, func_name.c_str());
+    size_t st_name = find_strtab_offset(m_fp, shdr.sh_offset, shdr.sh_size, func_name.c_str());
     if (st_name == 0) {
         ELOG_ERROR("failed to find %s in the .dynstr section.", func_name.c_str());
         return HP_ERR;
@@ -208,7 +290,7 @@ int hp_elf::get_elf_symtable(const string &func_name, Elf_Sym &sym)
     for (size_t i = 0; i < sym_num; i++) {
         ret = read_elf_sym(m_fp, &sym, sym_entsize);
         if (ret != 0) {
-            ELOG_ERROR("read_elf_sym on offset [%ld] fail.", sym_entsize);
+            ELOG_ERROR("read_elf_sym on offset [%ld] fail.", i*sym_entsize);
             return -1;
         }
         if (sym.st_name != st_name) {
@@ -332,6 +414,22 @@ static size_t find_strtab_offset(FILE *fp, size_t offset, size_t size, const cha
         }
     }
     return 0;
+}
+
+static int find_strtab_name(FILE *fp, size_t offset, char *name, size_t size)
+{
+    size_t idx = 0;
+    fseek(fp, offset, SEEK_SET);
+    for (size_t i = 0; i < size; i++) {
+        int c = fgetc(fp);
+        if (c == EOF || c == 0) {
+            name[idx] = 0;
+            return 0;
+        }
+        name[idx] = c;
+        idx++;
+    }
+    return -1;
 }
 
 

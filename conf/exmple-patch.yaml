@@ -5,15 +5,16 @@ metadata:
   name: "hot patch"
 spec:
   - name: mytest
-    path: /root/develop/photpatch/build/lib/libpatch.so
+    target: /root/develop/photpatch/build/bin/target
+    patch: /root/develop/photpatch/build/lib/libpatch.so
     pre_patch_callback: false
     post_patch_callback: false
     pre_unpatch_callback: false
     post_unpatch_callback: false
     function:
     - newname: helloworld
+     # newaddr: 0x00077555
       oldname: helloworld
-      newaddr: 
-      oldaddr: none
+     # oldaddr:
 
 

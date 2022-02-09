@@ -26,7 +26,7 @@
 #include <sys/wait.h>
 
 #include "config.h"
-
+#include "hp_elf.h"
 
 namespace ns_patch{
 
@@ -96,6 +96,7 @@ struct map_addr
 
 struct hp_function
 {
+	std::string name;
 	uint64_t start = 0;  	// 函数虚拟内存起始地址
 	uint64_t offset = 0;	// 偏量
 	uint64_t size = 0;		// 函数体大小
@@ -147,6 +148,8 @@ private:
 private:
 	int init(const uint32_t &pid, const std::string &yaml);
 	int try_patch();
+	int check_consistency();
+	int apply_patch();
 	int load_proc(const uint32_t &main_pid, hp_process &proc);
 	int load_lib(const YAML::hp_patch& patch);
 	int get_stack(const uint32_t &pid, std::vector<hp_frame> &stack);
@@ -156,6 +159,7 @@ private:
 	int get_maps(const uint32_t &pid, std::map<std::string, hp_map> &maps, std::string &target);
 	bool is_loaded(const std::string& libpath);
 	int get_dirs(const std::string &path, std::vector<std::string> &dirs);
+	std::string get_realpath(const std::string &path);
 	int get_status(const uint32_t &pid, std::map<std::string, std::string> &status);
 	map_type get_map_type(const std::string& map_str);
 	elf_type get_elf_type(const std::string& str);
@@ -163,6 +167,8 @@ private:
 	int backup(const std::vector<hp_backup> &recover);
 	int bytecode_write(const size_t &addr, const std::vector<uint8_t> &data);
 	int bytecode_read(const size_t &addr, const uint32_t &size, std::vector<uint8_t> &data);
+	uint64_t get_code_start_addr(const std::string &file);
+	hp_function get_function(const std::string &func_name, const uint64_t &func_addr, hp_elf &elf);
 };
 
 }

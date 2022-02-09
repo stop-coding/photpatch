@@ -15,8 +15,8 @@ spec:
   #补丁名称 name
   - name: mytest
     #补丁库，包含替换的函数实体
-    path: /root/develop/photpatch/lib/test.so
-    #目标进程文件，预留
+    patch: /root/develop/photpatch/lib/test.so
+    #目标文件，预留
     target: /root/develop/photpatch/bin/test
     pre_patch_callback: None
     post_patch_callback: None
@@ -108,8 +108,8 @@ struct convert<hp_head> {
 struct hp_func { 
     std::string new_name;
     std::string old_name;
-    std::string new_addr;
-    std::string old_addr;
+    uint64_t new_addr = 0;
+    uint64_t old_addr = 0;
 };
 
 template<>
@@ -141,13 +141,12 @@ struct convert<hp_func> {
     if (node["oldname"]) {
       in.old_name = node["oldname"].as<std::string>();
     } 
-
     if (node["newaddr"]) {
-      in.new_addr = node["newaddr"].as<std::string>();
+      in.new_addr = node["newaddr"].as<uint64_t>();
     }
 
     if (node["oldaddr"]) {
-      in.old_addr = node["oldaddr"].as<std::string>();
+      in.old_addr = node["oldaddr"].as<uint64_t>();
     }
 
     return true;
@@ -157,8 +156,8 @@ struct convert<hp_func> {
 /*
 name: mytest
 #补丁库，包含替换的函数实体
-path: /root/develop/photpatch/lib/test.so
-#目标进程文件，预留
+patch: /root/develop/photpatch/lib/test.so
+#目标文件，预留,可选
 target: /root/develop/photpatch/bin/test
 pre_patch_callback: None
 post_patch_callback: None
@@ -167,7 +166,8 @@ post_unpatch_callback: None
 */
 struct hp_patch { 
     std::string name;
-    std::string path;
+    std::string patch;
+    std::string target;
     bool pre_patch_callback;
     bool post_patch_callback;
     bool pre_unpatch_callback;
@@ -180,7 +180,8 @@ struct convert<hp_patch> {
   static Node encode(const hp_patch& in) {
     Node node;
     node["name"] = in.name;
-    node["path"] = in.path;
+    node["patch"] = in.patch;
+    node["target"] = in.target;
     node["pre_patch_callback"] = in.pre_patch_callback;
     node["post_patch_callback"] = in.post_patch_callback;
     node["pre_unpatch_callback"] = in.pre_unpatch_callback;
@@ -204,10 +205,16 @@ struct convert<hp_patch> {
       return false;
     }
 
-    if (node["path"]) {
-      in.path = node["path"].as<std::string>();
+    if (node["patch"]) {
+      in.patch = node["patch"].as<std::string>();
     } else {
       return false;
+    }
+
+    if (node["target"]) {
+      in.target = node["target"].as<std::string>();
+    } else {
+      in.target = "";
     }
 
     if (node["pre_patch_callback"]) {
@@ -225,7 +232,6 @@ struct convert<hp_patch> {
     if (node["post_unpatch_callback"]) {
       in.pre_patch_callback = node["post_unpatch_callback"].as<bool>();
     }
-
     if (node["function"] && node["function"].IsSequence()) {
       for (auto it = node["function"].begin(); it != node["function"].end(); it++) {
         if (!it->IsMap()) {
